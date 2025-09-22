@@ -1,80 +1,71 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Collections.Generic;
 
 class Program
 {
     static async Task Main(string[] args)
     {
         Console.Title = "ImgPull by Masterblastr";
-        string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string[] defaultDirectories = { "Desktop", "Documents", "Downloads", "3D Objects", "Pictures", "Videos" };
 
-        // Ensure the destination directory exists
+        // Destination folder in current working directory
         string destinationDirectory = Path.Combine(Directory.GetCurrentDirectory(), "output");
-        if (!Directory.Exists(destinationDirectory))
-        {
-            Directory.CreateDirectory(destinationDirectory);
-        }
+        Directory.CreateDirectory(destinationDirectory);
 
-        // Traverse the default directories and copy image files
-        Console.WriteLine("Copying image files...");
-        foreach (string directory in defaultDirectories)
-        {
-            string sourceDirectory = Path.Combine(userProfile, directory);
-            if (Directory.Exists(sourceDirectory))
-            {
-                await TraverseAndCopyImagesAsync(sourceDirectory, destinationDirectory);
-            }
-        }
+        Console.WriteLine("Copying image files from all accessible drives...");
+
+        // Enumerate all accessible fixed drives
+        var drives = DriveInfo.GetDrives()
+                              .Where(d => d.IsReady && d.DriveType == DriveType.Fixed)
+                              .Select(d => d.RootDirectory.FullName);
+
+        var tasks = drives.Select(d => TraverseAndCopyImagesAsync(d, destinationDirectory));
+        await Task.WhenAll(tasks);
 
         Console.WriteLine("Image files copied successfully to the 'output' folder.");
         Console.WriteLine("Press Enter to exit.");
         Console.ReadLine();
     }
 
+    // ✅ Only allow common photo formats
+    static readonly HashSet<string> ImageExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".jpg", ".jpeg", ".png", ".gif", ".webp"
+    };
+
+    static bool IsImageFile(string filePath) =>
+        ImageExtensions.Contains(Path.GetExtension(filePath));
+
     static async Task TraverseAndCopyImagesAsync(string sourceDir, string destDir)
     {
-        var directories = new Stack<string>();
-        directories.Push(sourceDir);
-
-        while (directories.Count > 0)
+        try
         {
-            string currentDir = directories.Pop();
-            Console.WriteLine($"Traversing directory: {currentDir}");
+            // Copy all image files in this directory
+            var files = Directory.EnumerateFiles(sourceDir);
+            var copyTasks = files
+                .Where(IsImageFile)
+                .Select(f => CopyImageFileAsync(f, destDir));
 
-            try
-            {
-                string[] files = Directory.GetFiles(currentDir);
-                var tasks = new List<Task>();
+            await Task.WhenAll(copyTasks);
 
-                foreach (string file in files)
-                {
-                    if (IsImageFile(file))
-                    {
-                        tasks.Add(CopyImageFileAsync(file, destDir));
-                    }
-                }
-
-                await Task.WhenAll(tasks);
-
-                string[] subDirs = Directory.GetDirectories(currentDir);
-                foreach (string subDir in subDirs)
-                {
-                    directories.Push(subDir);
-                }
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                // Log or display the error
-                Console.WriteLine($"Access denied: {ex.Message}");
-            }
-            catch (Exception ex)
-            {
-                // Log or display other exceptions
-                Console.WriteLine($"Error: {ex.Message}");
-            }
+            // Recurse into subdirectories in parallel
+            var subDirs = Directory.EnumerateDirectories(sourceDir);
+            var subTasks = subDirs.Select(sd => TraverseAndCopyImagesAsync(sd, destDir));
+            await Task.WhenAll(subTasks);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            Console.WriteLine($"Access denied: {sourceDir}");
+        }
+        catch (PathTooLongException)
+        {
+            Console.WriteLine($"Path too long: {sourceDir}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Error in {sourceDir}: {ex.Message}");
         }
     }
 
@@ -87,6 +78,7 @@ class Program
             string fileNameOnly = Path.GetFileNameWithoutExtension(filePath);
             string extension = Path.GetExtension(filePath);
 
+            // Ensure unique filename
             while (File.Exists(destFilePath))
             {
                 string newFileName = $"{fileNameOnly}_{count}{extension}";
@@ -94,23 +86,15 @@ class Program
                 count++;
             }
 
-            using (var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 4096, useAsync: true))
-            using (var destinationStream = new FileStream(destFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, bufferSize: 4096, useAsync: true))
-            {
-                await sourceStream.CopyToAsync(destinationStream);
-            }
+            using var sourceStream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 4096, useAsync: true);
+            using var destinationStream = new FileStream(destFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, useAsync: true);
+            await sourceStream.CopyToAsync(destinationStream);
+
+            Console.WriteLine($"Copied: {filePath} -> {destFilePath}");
         }
         catch (Exception ex)
         {
-            // Log the exception (e.g., to a log file or console)
-            Console.WriteLine($"Failed to copy file: {filePath}. Error: {ex.Message}");
+            Console.WriteLine($"Failed to copy {filePath}: {ex.Message}");
         }
-    }
-
-    static bool IsImageFile(string filePath)
-    {
-        string extension = Path.GetExtension(filePath).ToLower();
-        return extension == ".jpg" || extension == ".jpeg" || extension == ".png" || extension == ".gif" || extension == ".bmp";
-        // Add more extensions as needed
     }
 }
