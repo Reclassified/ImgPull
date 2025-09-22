@@ -9,7 +9,7 @@ class Program
     {
         Console.Title = "ImgPull by Masterblastr";
         string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        string[] defaultDirectories = { "Desktop", "Documents", "Downloads", "3D Objects" };
+        string[] defaultDirectories = { "Desktop", "Documents", "Downloads", "3D Objects", "Pictures", "Videos" };
 
         // Ensure the destination directory exists
         string destinationDirectory = Path.Combine(Directory.GetCurrentDirectory(), "output");
